@@ -62,6 +62,21 @@ User asked mid-session: every time a reservation is created or deleted in this a
 3. Decide where this logic lives — likely a new authenticated endpoint on `softone-live-backend` (already has SoftOne credentials + session handling on the Oracle VM) that this app's frontend calls after every reservation create/delete.
 4. Also check `/Users/nucintosh/PYTHON/API_ws_REPORTS/ORACLE FASTAPI SOFTONE EMAIL REPORTS/` — a separate existing backend already doing SoftOne + email work, may have relevant write patterns or may be the better home for this.
 
+## 4b. SoftOne stock sync — investigated, not yet built
+
+User asked (2026-07-27) to keep `products.stock_softone` updated from SoftOne's Αποθήκη → Είδη → Ευρετήριο Ειδών (Items Index) screen, specifically the **ΔΙΑΘΕΣΙΜΑ (available)** calculated field — not raw stock. The old Airtable script (pasted by user) pulled `ITEM.SoRemQty1`, which turns out to be the **wrong field**.
+
+**Live-tested against the real SoftOne API** (`aromaioniou.oncloud.gr`, using `softone-live-backend`'s existing `app/softone.py` client + credentials from its `.env`):
+
+- `getBrowserInfo` object=`ITEM`, list=`ALL` exposes both fields, with distinct captions:
+  - `ITEM.SoRemQty1` → caption **"Συνολ. Υπόλοιπο"** (total remaining / raw stock) — what the old script used.
+  - `ITEM.V21` → caption **"Διαθέσιμα"** (available) — **this is the correct field**, computed by SoftOne itself (stock minus commitments — `ITEM.V15` = "Δεσμευμένα"/committed, `ITEM.V16` = "Αναμενόμενα"/incoming, both feed into V21).
+  - Confirmed both fields can differ (V21 = SoRemQty1 − committed) though the one item spot-checked (`A7642BB`) happened to have zero commitments so they matched (22 = 22).
+- **Filter matters a lot for performance.** SoftOne's `ITEM` table is much bigger than our ~1,100 equipment products (this is a shared multi-purpose ERP instance). An **unfiltered** `getBrowserInfo` (list=ALL, no filter) times out past 30s — confirmed by direct test. The old Airtable script's filter `ITEM.APVCODE=35*` is the correct scope: live-tested, returns **totalcount=1105** (matches our ~1,101 products), `getBrowserInfo` takes ~12.6s (slow but reliable), and paginated `getBrowserData` in batches of 500 pulls all 1,105 rows in **~2.3s total** (3 batches). Full bulk sync ≈ 15s end-to-end.
+- **Critical implication**: never do this per-product (1,100 individual `getBrowserInfo`+`getBrowserData` round trips) — reproduced a real SSL/read timeout doing exactly that in a quick sequential-loop test. One filtered bulk call + pagination is the only viable approach. User explicitly flagged this ("keep in memory") — the sync should run periodically (cron/scheduled job) and cache the result in `products.stock_softone`, not be queried live from SoftOne on every catalog page load.
+
+**Not yet built**: the actual sync job (bulk-fetch → match by `ITEM.CODE`/`kodikos` → upsert `stock_softone` = `ITEM.V21` into Supabase). Design leaning: small Python script reusing `softone.py`, run on a schedule on the Oracle VM (same pattern as other cron/service jobs there), writing to Supabase via service-role key (same pattern already used by [[supabase keepalive]]). Open decisions before building: sync frequency, and whether to also expose an on-demand "sync now" button in the app.
+
 ## 5. Deferred to Phase 2 (per user)
 
 Email notification triggered on each reservation — explicitly phase 2, not part of the initial build.
