@@ -36,4 +36,5 @@ export interface ProjectRow {
 export interface Profile {
   id: string
   full_name: string
+  role: 'architect' | 'admin'
 }

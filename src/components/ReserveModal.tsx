@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Form, InputNumber, Modal, Select, message } from 'antd'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
+import { triggerOrderSync } from '../lib/orderSync'
 import type { Product, ProjectRow } from '../types'
 
 export default function ReserveModal({
@@ -57,6 +58,7 @@ export default function ReserveModal({
     }
     message.success(`Reserved ${values.quantity} × ${product.kodikos}`)
     onDone()
+    triggerOrderSync()
   }
 
   return (

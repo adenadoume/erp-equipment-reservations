@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Image, Input, InputNumber, Popconfirm, Select, Space, Table, Typography, message } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Image, Input, InputNumber, Popconfirm, Select, Space, Spin, Table, Typography, message } from 'antd'
 import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
+import { triggerOrderSync } from '../lib/orderSync'
 import type { Reservation } from '../types'
 
 type Row = Reservation & { product?: { photo_url: string | null } | null }
 
+const PAGE_SIZE = 20
+
 export default function Reservations() {
-  const { profile, session } = useAuth()
+  const { profile, session, isAdmin } = useAuth()
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -17,6 +20,8 @@ export default function Reservations() {
   const [architectFilter, setArchitectFilter] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editQty, setEditQty] = useState<number>(1)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   async function load() {
     setLoading(true)
@@ -53,6 +58,31 @@ export default function Reservations() {
     })
   }, [rows, search, projectFilter, architectFilter])
 
+  const visibleRows = filtered.slice(0, visibleCount)
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [search, projectFilter, architectFilter])
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))
+        }
+      },
+      { rootMargin: '400px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [filtered.length])
+
+  function canEdit(row: Row) {
+    return isAdmin || row.architect_id === session?.user.id
+  }
+
   async function saveEdit(row: Row) {
     const { error } = await supabase
       .from('reservations')
@@ -64,6 +94,7 @@ export default function Reservations() {
     }
     setEditingId(null)
     load()
+    triggerOrderSync()
   }
 
   async function deleteRow(id: string) {
@@ -74,6 +105,7 @@ export default function Reservations() {
     }
     message.success('Deleted')
     load()
+    triggerOrderSync()
   }
 
   function downloadCsv() {
@@ -125,82 +157,96 @@ export default function Reservations() {
         </Button>
       </Space>
 
-      <Table<Row>
-        rowKey="id"
-        loading={loading}
-        dataSource={filtered}
-        pagination={{ pageSize: 20 }}
-        columns={[
-          {
-            title: 'Photo',
-            width: 110,
-            render: (_, r) =>
-              r.product?.photo_url ? (
-                <Image
-                  src={r.product.photo_url}
-                  width={90}
-                  height={90}
-                  style={{ objectFit: 'contain', background: '#111' }}
-                />
-              ) : null,
-          },
-          { title: 'Project', dataIndex: 'project_code', sorter: (a, b) => a.project_code.localeCompare(b.project_code) },
-          { title: 'Architect', dataIndex: 'architect_name' },
-          { title: 'Code', dataIndex: 'product_code' },
-          { title: 'Description', dataIndex: 'description', ellipsis: true },
-          { title: 'Category', dataIndex: 'category' },
-          {
-            title: 'Qty',
-            dataIndex: 'quantity',
-            width: 100,
-            render: (_, r) =>
-              editingId === r.id ? (
-                <InputNumber min={1} value={editQty} onChange={(v) => setEditQty(v ?? 1)} autoFocus />
-              ) : (
-                r.quantity
-              ),
-          },
-          {
-            title: 'Date',
-            dataIndex: 'reservation_date',
-            render: (v) => (v ? dayjs(v).format('D/M/YYYY') : ''),
-          },
-          {
-            title: 'Actions',
-            width: 160,
-            render: (_, r) =>
-              editingId === r.id ? (
-                <Space>
-                  <Button size="small" type="primary" onClick={() => saveEdit(r)}>
-                    Save
-                  </Button>
-                  <Button size="small" onClick={() => setEditingId(null)}>
-                    Cancel
-                  </Button>
-                </Space>
-              ) : (
-                <Space>
-                  <Button
-                    size="small"
-                    type="primary"
-                    onClick={() => {
-                      setEditingId(r.id)
-                      setEditQty(r.quantity)
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  <Popconfirm title="Delete this reservation?" onConfirm={() => deleteRow(r.id)}>
-                    <Button size="small" danger>
-                      Delete
+      <div style={{ overflowX: 'auto' }}>
+        <Table<Row>
+          rowKey="id"
+          loading={loading}
+          dataSource={visibleRows}
+          pagination={false}
+          scroll={{ x: 1100 }}
+          columns={[
+            {
+              title: 'Photo',
+              width: 170,
+              render: (_, r) =>
+                r.product?.photo_url ? (
+                  <Image
+                    src={r.product.photo_url}
+                    width={150}
+                    height={150}
+                    style={{ objectFit: 'contain', background: '#111' }}
+                  />
+                ) : null,
+            },
+            { title: 'Project', dataIndex: 'project_code', width: 120, sorter: (a, b) => a.project_code.localeCompare(b.project_code) },
+            { title: 'Architect', dataIndex: 'architect_name', width: 120 },
+            { title: 'Code', dataIndex: 'product_code', width: 120 },
+            { title: 'Description', dataIndex: 'description', width: 260, ellipsis: true },
+            { title: 'Category', dataIndex: 'category', width: 140 },
+            {
+              title: 'Qty',
+              dataIndex: 'quantity',
+              width: 100,
+              render: (_, r) =>
+                editingId === r.id ? (
+                  <InputNumber min={1} value={editQty} onChange={(v) => setEditQty(v ?? 1)} autoFocus />
+                ) : (
+                  r.quantity
+                ),
+            },
+            {
+              title: 'Date',
+              dataIndex: 'reservation_date',
+              width: 120,
+              render: (v) => (v ? dayjs(v).format('D/M/YYYY') : ''),
+            },
+            {
+              title: 'Actions',
+              width: 160,
+              fixed: 'right',
+              render: (_, r) => {
+                if (!canEdit(r)) return <Typography.Text type="secondary">—</Typography.Text>
+                return editingId === r.id ? (
+                  <Space>
+                    <Button size="small" type="primary" onClick={() => saveEdit(r)}>
+                      Save
                     </Button>
-                  </Popconfirm>
-                </Space>
-              ),
-          },
-        ]}
-      />
-      <Typography.Text type="secondary">{filtered.length} reservations</Typography.Text>
+                    <Button size="small" onClick={() => setEditingId(null)}>
+                      Cancel
+                    </Button>
+                  </Space>
+                ) : (
+                  <Space>
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={() => {
+                        setEditingId(r.id)
+                        setEditQty(r.quantity)
+                      }}
+                    >
+                      Edit
+                    </Button>
+                    <Popconfirm title="Delete this reservation?" onConfirm={() => deleteRow(r.id)}>
+                      <Button size="small" danger>
+                        Delete
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                )
+              },
+            },
+          ]}
+        />
+      </div>
+      {visibleCount < filtered.length && (
+        <div ref={sentinelRef} style={{ textAlign: 'center', padding: 24 }}>
+          <Spin />
+        </div>
+      )}
+      <Typography.Text type="secondary">
+        {visibleRows.length} of {filtered.length} reservations
+      </Typography.Text>
     </div>
   )
 }

@@ -18,6 +18,7 @@ create table if not exists projects (
 create table if not exists profiles (
   id         uuid primary key references auth.users(id) on delete cascade,
   full_name  text not null,
+  role       text not null default 'architect' check (role in ('architect', 'admin')),
   created_at timestamptz not null default now()
 );
 
@@ -49,6 +50,7 @@ create table if not exists products (
   photo_url     text,
   container     text,
   q             numeric not null default 0,   -- total stock (source of truth for availability calc)
+  mtrl_id       integer,                       -- SoftOne internal MTRL key (for order-sync ITELINES)
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
@@ -70,9 +72,12 @@ create table if not exists reservations (
   description      text,                       -- snapshot of product description at time of reservation
   category         text,                        -- snapshot of category at time of reservation
   edited_by        text,
+  softone_linenum  integer,                     -- stable SoftOne ITELINES LINENUM for this reservation, see order-sync
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
 );
+
+create unique index if not exists reservations_softone_linenum_idx on reservations (softone_linenum) where softone_linenum is not null;
 
 create index if not exists reservations_product_idx on reservations (product_code);
 create index if not exists reservations_project_idx on reservations (project_code);
@@ -91,9 +96,9 @@ left join (
 ) r on r.product_code = p.kodikos;
 
 -- ─────────────────────────────────────────────────────────────
--- RLS — internal tool, 7 known architects, all authenticated users
--- can read everything and manage reservations (mirrors the shared
--- Airtable/Softr editing behaviour: anyone can edit/delete anyone's row).
+-- RLS — internal tool. All authenticated users can read everything.
+-- Reservations can only be inserted/edited/deleted by their own
+-- architect, or by an admin (role='admin' in profiles).
 -- ─────────────────────────────────────────────────────────────
 alter table projects      enable row level security;
 alter table profiles      enable row level security;
@@ -107,10 +112,15 @@ create policy "authenticated read profiles"      on profiles      for select to 
 
 create policy "authenticated read products"      on products      for select to authenticated using (true);
 
+create or replace function is_admin()
+returns boolean as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'admin');
+$$ language sql stable security definer;
+
 create policy "authenticated read reservations"  on reservations  for select to authenticated using (true);
-create policy "authenticated insert reservations" on reservations for insert to authenticated with check (true);
-create policy "authenticated update reservations" on reservations for update to authenticated using (true);
-create policy "authenticated delete reservations" on reservations for delete to authenticated using (true);
+create policy "own or admin insert reservations" on reservations for insert to authenticated with check (architect_id = auth.uid() or is_admin());
+create policy "own or admin update reservations" on reservations for update to authenticated using (architect_id = auth.uid() or is_admin());
+create policy "own or admin delete reservations" on reservations for delete to authenticated using (architect_id = auth.uid() or is_admin());
 
 -- updated_at bookkeeping
 create or replace function set_updated_at()
