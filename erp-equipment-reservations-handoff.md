@@ -2,6 +2,8 @@
 
 > **Rule**: Every new feature, bug fix, infrastructure change, or decision made in any session must be appended to the **Session Log** section at the bottom. This file is the authoritative context for future AI sessions working on this project.
 
+> **SAFETY RULE (CRITICAL, per explicit user instruction 2026-07-27)**: SoftOne write access from this system may **only ever** target document **ΠΑΛ-ΑΝ0026 / SALDOC FINDOC 45911** — no other SoftOne document, under any circumstances. Other SoftOne documents feed ΑΑΔΕ (the Greek tax authority); writing to the wrong one is a legal/financial risk, not just a data bug. This is enforced in code as a **hardcoded, non-parameterized target** in `softone.py`'s `sync_equipment_order_lines()` (`EQUIPMENT_ORDER_OBJECT`/`EQUIPMENT_ORDER_FINDOC`/`EQUIPMENT_ORDER_FINCODE` constants), with a live FINCODE sanity-check before every write — there is no code path, parameter, or request body field that can redirect a write anywhere else. If this system ever needs to write to SoftOne for a different purpose in the future, that requires a new, separately-reviewed function — never generalize `sync_equipment_order_lines()` into a parameterized "write to any document" helper.
+
 ---
 
 ## 1. What This App Is
@@ -82,9 +84,14 @@ User asked mid-session: every time a reservation is created or deleted in this a
 
 **Also, per user's own insight mid-session**: once this sync is live, SoftOne's own `Δεσμευμένα`/`ITEM.V15` (committed) will start including these mirrored order lines automatically, which means `ITEM.V21`/ΔΙΑΘΕΣΙΜΑ (already synced into `products.stock_softone`, see 4b below) will then also reflect our own app's reservations — no separate accounting needed for that.
 
-**Not yet built**: the actual endpoint (likely `POST /api/equipment/sync-order` on `softone-live-backend`, called after every reservation insert/update/delete from this app's frontend, mirroring the pattern already used for the stock sync) and the `softone_linenum` schema migration.
+**Built and deployed 2026-07-27** (schema migration still pending, see below):
 
-## 4b. SoftOne stock sync — investigated, not yet built
+- `POST /api/equipment/sync-order` on `softone-live-backend` — idempotent full-replace: reads all current `reservations` (joined with `products.mtrl_id`), assigns `softone_linenum` (≥9000001, incrementing) to any reservation that doesn't have one yet, persists that back to Supabase, builds the complete `ITELINES` array, and writes it via the guarded `sync_equipment_order_lines()` in `softone.py`. Skips (doesn't fail) reservations whose product has no `mtrl_id` yet — depends on `/api/equipment/sync-stock` having run at least once to populate that.
+- Frontend calls this (fire-and-forget, `src/lib/orderSync.ts`) after every reservation create (`ReserveModal.tsx`), edit, and delete (`Reservations.tsx`) — best-effort, a failure only shows a warning toast, never blocks the actual Supabase operation (Supabase stays the source of truth).
+- **Blocked on the pending schema migration** (`supabase/migration_002_admin_rls_softone.sql`, not yet run by user as of this writing) — `reservations.softone_linenum` and `products.mtrl_id` don't exist in the live DB yet. Verified the endpoint fails *cleanly* in this state (502 "column does not exist", not a crash) — confirmed live via `curl -X POST https://erp.agop.pro/api/equipment/sync-order`.
+- **Once the migration runs**, still need to run `/api/equipment/sync-stock` once to backfill `mtrl_id` for all 1,101 products before the order-sync can build real lines for existing reservations.
+
+## 4b. SoftOne stock sync — built and live
 
 User asked (2026-07-27) to keep `products.stock_softone` updated from SoftOne's Αποθήκη → Είδη → Ευρετήριο Ειδών (Items Index) screen, specifically the **ΔΙΑΘΕΣΙΜΑ (available)** calculated field — not raw stock. The old Airtable script (pasted by user) pulled `ITEM.SoRemQty1`, which turns out to be the **wrong field**.
 
@@ -104,6 +111,17 @@ User asked (2026-07-27) to keep `products.stock_softone` updated from SoftOne's 
 - Manual "Sync SoftOne stock" button added to `src/pages/Catalog.tsx`, calls `https://erp.agop.pro/api/equipment/sync-stock` directly (that backend's CORS is already wide open, so no proxy rewrite was needed in this app).
 - **Important scope note**: this only refreshes `products.stock_softone` (an informational/reference column). It does **not** touch `products.q`, which is the column that actually drives this app's own live availability calc (`product_availability` view = `q − sum(our reservations)`). Those are intentionally two different numbers: `stock_softone`/ΔΙΑΘΕΣΙΜΑ already accounts for SoftOne-side commitments (e.g. stock sold via other business documents), while `q` minus *our* reservations is what tells an architect what's actually free to reserve through this app. If `q` should also start tracking SoftOne over time, that's a separate explicit decision — not made yet, would need to be raised with the user (it changes what "available" means in the catalog UI).
 - **Bugs hit and fixed during first deploy** (full postmortem in `softone-live-handoff.md`): (1) upserting unconditionally created 21 incomplete rows for SoftOne items outside the actual catalog — fixed by pre-filtering to known `kodikos` only; (2) a stale `__pycache__/*.pyc` on the VM (leftover from an earlier botched `scp -r` that nested-copied into `app/app/`) caused a deployed fix to silently not take effect — `docker build --no-cache` after purging `__pycache__` resolved it. Also corrected: the documented backend path (`/home/ubuntu/softone-live-backend/`) was stale post-migration; real path is `/home/ubuntu/softone-live/`.
+- **Extended 2026-07-27 (later same day)**: `fetch_equipment_availability()` now also captures `MTRL` (SoftOne's internal numeric item key, parsed from `ZOOMINFO`, e.g. `"ITEM;24959"` → `24959`) alongside `V21`, and `/api/equipment/sync-stock` upserts it into a new `products.mtrl_id` column. This is what section 4's order-sync needs to build `ITELINES` (`setData` requires the numeric `MTRL`, not the text product code).
+
+## 4c. Admin roles + ownership-based reservation permissions — built 2026-07-27
+
+User: architects should only be able to edit/delete their **own** reservations (not each other's, as the original shared-Airtable-editing model allowed), except `giorgos@palerosbay.com`, who should have full admin rights over everything.
+
+- `profiles.role` (`'architect'` default, or `'admin'`) added via `migration_002_admin_rls_softone.sql`.
+- RLS policies on `reservations` for insert/update/delete changed from "any authenticated user" to `architect_id = auth.uid() OR is_admin()` (new `is_admin()` SQL function checking `profiles.role`).
+- `giorgos@palerosbay.com` already existed as a real Supabase Auth user (along with several others created since the last session: `elina@woodandstone.gr`, `leo@`/`irene@`/`alex@`/`pavlos@`/`elli@palerosdreamhomes.com`, `base@palerosbay.com`, `george@agop.pro` — team is actively self-provisioning accounts) — migration grants admin role to their existing user id (`ecca4e7b-2c74-48cb-b609-1528687c1818`).
+- Frontend (`AuthContext.tsx`) exposes `isAdmin`; `Reservations.tsx` hides the Edit/Delete buttons entirely for rows the current user doesn't own (unless admin) rather than showing controls that would just fail against RLS.
+- **Blocked on the same pending migration as 4/order-sync** — not live until `migration_002_admin_rls_softone.sql` is run.
 
 ## 5. Deferred to Phase 2 (per user)
 
@@ -152,3 +170,16 @@ Vercel (erp-equipment-reservations, auto-deploys on push to main)
 - Committed and pushed app code (2nd commit). Verified images resolve live via jsDelivr (`curl -I` on `A7642BB.png` → 200).
 - **What's left for the user** (see final chat message for full instructions): run `supabase/schema.sql`, import the 3 CSVs in `supabase-import/` via Supabase Studio (products → projects → reservations, in that FK order), create 7 Supabase Auth users (need real email addresses — not in the source data), set `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` in Vercel project settings if not already there.
 - Remaining open items: SoftOne ΠΑΛ-ΑΝ0026 order-sync (section 4, not started) and email-on-reservation (section 5, explicit phase 2).
+
+### 2026-07-27 (continued) — Admin roles, ownership RLS, order-sync built, UI fixes
+
+- UI fixes: catalog's "Sync SoftOne stock" button moved to the right of the toolbar + confirm dialog; Reservations photos 90px; Catalog switched pagination → infinite scroll (IntersectionObserver).
+- User corrected an earlier assumption: pushed back that `stock_softone` (old Airtable field) was already correct — live arithmetic check (`SoRemQty1=18, V15=70, V21=-52`, `18−70=−52`) settled it: `V21`/ΔΙΑΘΕΣΙΜΑ is correct, confirmed by user after seeing the numbers.
+- User's own insight, worth remembering: once the order-sync (section 4) is live, SoftOne's own Δεσμευμένα will include our mirrored reservation lines automatically — so `stock_softone`/V21 ends up reflecting our own reservations too, no extra plumbing needed for that.
+- **SoftOne write API investigated and confirmed working** — see section 4. Official BlackBook docs (`SoftOne BlackBook ENG ver.3.5.pdf`, user dropped it into the repo root — gitignored, proprietary vendor docs, not meant for the public repo) plus a live empirical test against ΠΑΛ-ΑΝ0026 itself (with user's explicit go-ahead) nailed down the exact `LINENUM`/full-replace semantics.
+- **User set the critical safety rule** (now at the top of this file): SoftOne writes may only ever target ΠΑΛ-ΑΝ0026/FINDOC 45911, no other document, ever — ΑΑΔΕ/legal exposure otherwise. Implemented as a hardcoded, non-parameterized target in `softone.py`, not a runtime check.
+- Built and deployed: `POST /api/equipment/sync-order` (order-sync, section 4) and admin roles + ownership-based RLS (section 4c) — both on `softone-live-backend` / this app's schema respectively. Both **blocked on `migration_002_admin_rls_softone.sql`** being run — not yet done as of this entry. Verified the backend fails cleanly (not a crash) in this pending state.
+- **Bug caught by user while testing live**: Edit/Delete buttons disappeared for everyone. Root cause: all 121 imported reservations have `architect_id = NULL` (CSV import only had text names), so the new ownership check correctly hid buttons for rows nobody's linked to — expected given the migration hasn't run, but needed a backfill so it resolves itself once it does. Added a `UPDATE ... WHERE architect_id IS NULL AND lower(architect_name) = lower(profiles.full_name)` step to the migration — auto-links ALEX/ELINA/ELLI's historical reservations to their now-existing real accounts (`alex@palerosdreamhomes.com` etc.); CAROLIN/KONSTANTINOS/NIKI/VASIA stay admin-only-editable until they get real accounts too.
+- Deploy notes: redeployed `softone-live-backend` twice more this session (MTRL capture + order-sync endpoint) — used `docker build --no-cache` after purging `__pycache__` both times per the gotcha logged in `softone-live-handoff.md`, no repeat of that bug.
+- **What's left for the user right now**: run `supabase/migration_002_admin_rls_softone.sql` in the SQL Editor — this is blocking three features at once (admin roles, per-architect edit permissions, and the order-sync). After that, run the "Sync SoftOne stock" button once to backfill `mtrl_id` for all products before the order-sync can build real lines for existing reservations.
+- Also queued, not started: single "add product" flow (enter code, auto-fill from SoftOne via exact-code lookup, upload image) and bulk product import (Excel of codes + drag-drop images matched by `<code>.jpg` filename).
