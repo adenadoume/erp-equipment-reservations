@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Col, Image, Input, InputNumber, Popconfirm, Row, Select, Space, Table, Typography, message } from 'antd'
+import { Button, Col, Image, Input, InputNumber, Popconfirm, Row, Select, Space, Table, Tooltip, Typography, message } from 'antd'
 import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { supabase } from '../lib/supabase'
@@ -7,7 +7,10 @@ import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
 import type { Reservation } from '../types'
 
-type RowType = Reservation & { product?: { photo_url: string | null } | null }
+type RowType = Reservation & {
+  product?: { photo_url: string | null; q: number } | null
+  available_qty?: number | null
+}
 
 export default function Reservations() {
   const { profile, session, isAdmin } = useAuth()
@@ -21,12 +24,20 @@ export default function Reservations() {
 
   async function load() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('reservations')
-      .select('*, product:products(photo_url)')
-      .order('created_at', { ascending: false })
-    if (error) message.error(error.message)
-    setRows((data ?? []) as RowType[])
+    const [resResp, availResp] = await Promise.all([
+      supabase
+        .from('reservations')
+        .select('*, product:products(photo_url, q)')
+        .order('created_at', { ascending: false }),
+      supabase.from('product_availability').select('kodikos, available_qty'),
+    ])
+    if (resResp.error) message.error(resResp.error.message)
+    const availMap = new Map((availResp.data ?? []).map((p) => [p.kodikos, p.available_qty]))
+    const merged = (resResp.data ?? []).map((r) => ({
+      ...r,
+      available_qty: availMap.get(r.product_code) ?? null,
+    }))
+    setRows(merged as RowType[])
     setLoading(false)
   }
 
@@ -59,12 +70,17 @@ export default function Reservations() {
   }
 
   async function saveEdit(row: RowType) {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('reservations')
       .update({ quantity: editQty, edited_by: profile?.full_name ?? session?.user.email ?? null })
       .eq('id', row.id)
+      .select()
     if (error) {
       message.error(error.message)
+      return
+    }
+    if (!data || data.length === 0) {
+      message.error("Couldn't save — you don't have permission to edit this reservation (not yours, and you're not an admin).")
       return
     }
     setEditingId(null)
@@ -73,9 +89,13 @@ export default function Reservations() {
   }
 
   async function deleteRow(id: string) {
-    const { error } = await supabase.from('reservations').delete().eq('id', id)
+    const { data, error } = await supabase.from('reservations').delete().eq('id', id).select()
     if (error) {
       message.error(error.message)
+      return
+    }
+    if (!data || data.length === 0) {
+      message.error("Couldn't delete — you don't have permission to delete this reservation (not yours, and you're not an admin).")
       return
     }
     message.success('Deleted')
@@ -145,7 +165,7 @@ export default function Reservations() {
           loading={loading}
           dataSource={filtered}
           pagination={{ pageSize: 20, responsive: true, size: 'small' }}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1300 }}
           columns={[
             {
               title: 'Photo',
@@ -176,6 +196,15 @@ export default function Reservations() {
                   r.quantity
                 ),
             },
+            { title: 'Stock', width: 90, render: (_, r) => r.product?.q ?? '' },
+            {
+              title: 'ΔΙΑΘΕΣΙΜΑ',
+              width: 110,
+              render: (_, r) =>
+                r.available_qty == null ? '' : (
+                  <span style={{ color: r.available_qty <= 0 ? '#ff4d4f' : '#52c41a' }}>{r.available_qty}</span>
+                ),
+            },
             {
               title: 'Date',
               dataIndex: 'reservation_date',
@@ -187,7 +216,12 @@ export default function Reservations() {
               width: 160,
               fixed: 'right',
               render: (_, r) => {
-                if (!canEdit(r)) return <Typography.Text type="secondary">—</Typography.Text>
+                if (!canEdit(r))
+                  return (
+                    <Tooltip title="Only the reservation's own architect or an admin can edit/delete this">
+                      <Typography.Text type="secondary">Not yours</Typography.Text>
+                    </Tooltip>
+                  )
                 return editingId === r.id ? (
                   <Space>
                     <Button size="small" type="primary" onClick={() => saveEdit(r)}>
