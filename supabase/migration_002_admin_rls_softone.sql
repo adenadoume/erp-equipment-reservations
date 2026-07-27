@@ -20,6 +20,20 @@ create unique index if not exists reservations_softone_linenum_idx on reservatio
 alter table products add column if not exists mtrl_id integer;
 
 -- ─────────────────────────────────────────────────────────────
+-- Backfill architect_id on historical reservations (imported from
+-- Airtable with only a text architect_name, no real auth user yet).
+-- Matches case-insensitively against profiles.full_name (which is
+-- derived from each user's email prefix). Reservations whose architect
+-- doesn't have a real account yet stay unowned (admin-only edit) until
+-- one is created — safe to re-run, only fills in currently-null rows.
+-- ─────────────────────────────────────────────────────────────
+update reservations r
+set architect_id = p.id
+from profiles p
+where r.architect_id is null
+  and lower(r.architect_name) = lower(p.full_name);
+
+-- ─────────────────────────────────────────────────────────────
 -- RLS: architects can only edit/delete their OWN reservations.
 -- Admins (role='admin') can edit/delete anyone's. Replaces the
 -- earlier "anyone can edit anyone's row" policy.
