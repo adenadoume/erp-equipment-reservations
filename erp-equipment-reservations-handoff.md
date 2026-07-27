@@ -52,15 +52,37 @@ Airtable had static `DESMEVMENA`/`DIATHESIMA` rollup columns that would go stale
 
 ---
 
-## 4. New Requirement (not yet built): SoftOne order-sync
+## 4. SoftOne order-sync — write API confirmed working, feature not yet built
 
-User asked mid-session: every time a reservation is created or deleted in this app, a SoftOne ΠΑΡΑΓΓΕΛΙΑ (purchase order) document — **ΠΑΛ-ΑΝ0026, dated 27/7/2026, number 26** — should be updated (line added on create, line removed on delete).
+User asked mid-session: every time a reservation is created or deleted in this app, a SoftOne ΠΑΡΑΓΓΕΛΙΑ document — **ΠΑΛ-ΑΝ0026** (SALDOC, series ΠΑΛ-ΑΝ, **FINDOC key = 45911**, customer "ΧΡΙΣΕΜΜΑ ΑΝΩΝΥΜΗ ΕΤΑΙΡΕΙΑ ΑΚΙΝΗΤΩΝ", both header and line `COMMENTS` = "PDH RESERVATIONS") — should be updated to mirror reservations (line added on create, line removed on delete). User confirmed writes are safe to test here ("it's order only, no other implications") and that the one pre-existing line on this doc (`L3289W`, qty 1) was leftover/test, fine to overwrite.
 
-**Not yet implemented.** This is a live-ERP write operation (mutating a real production purchasing document), which is a materially different risk class than the rest of this app, so it's deliberately deferred as its own step rather than rushed alongside the initial build. Also: the existing `softone-live-backend` FastAPI service (see [[softone-live app]] memory) is currently **read-only** — only `GET`/browse routes exist, no documented write/save-document route. Before this can be built, need to:
-1. Confirm whether SoftOne's `s1services` API supports updating an existing SALDOC's lines (add/remove), and what that call looks like.
-2. Locate document ΠΑΛ-ΑΝ0026 via the SoftOne API to confirm series/findoc.
-3. Decide where this logic lives — likely a new authenticated endpoint on `softone-live-backend` (already has SoftOne credentials + session handling on the Oracle VM) that this app's frontend calls after every reservation create/delete.
-4. Also check `/Users/nucintosh/PYTHON/API_ws_REPORTS/ORACLE FASTAPI SOFTONE EMAIL REPORTS/` — a separate existing backend already doing SoftOne + email work, may have relevant write patterns or may be the better home for this.
+**Write capability confirmed live, 2026-07-27** — `setData` works against this SoftOne instance using the exact same auth/session pattern the existing read-only `softone-live-backend` already uses (`service`, `clientID`, `appId`, `object`, `key`, `data`). Full contract sourced from the official **SoftOne BlackBook** (`SoftOne BlackBook ENG ver.3.5.pdf`, dropped into this app's repo root by the user — Chapter 12, "SetData (Post Method)", p.483-495) and verified empirically against the live document:
+
+- **Child-table (line) semantics — this is the critical, documented, and empirically-verified behavior**: to update a document's `ITELINES`, you must include the `LINENUM` of **every existing line you want to keep** (with no other fields, if it's unchanged) alongside any lines you're adding or changing. **Any existing line whose `LINENUM` is NOT included in the `data.ITELINES` array gets deleted.** This is not merge-by-default — it's an explicit "list the lines you want to survive" contract.
+- **New lines** use `LINENUM` **≥ 9000001** (official convention, confirmed in the BlackBook's own worked SALDOC example: two new lines get `LINENUM: 9000001` and `9000002`).
+- **Empirical test performed** (on the live ΠΑΛ-ΑΝ0026 / FINDOC 45911, with user's explicit go-ahead): sent `setData` with `key: 45911` and `data.ITELINES` containing one line for `MTRL: 24959` (=A7642BB), `QTY1: 1`, **without** including the existing line's `LINENUM`. Result: `{"success": true, "id": "45911"}` — updated the same document (didn't duplicate), and the pre-existing `L3289W` line was gone, replaced by the new `A7642BB` line. This is exactly what the docs predicted, and confirms the write path is real and working, not just documented.
+- **Hard constraint discovered**: a SALDOC **cannot have zero lines** — tried setting `ITELINES: []` to clean the test document back to empty, got a clean rejection: `{"success": false, "error": "Το παραστατικό δεν έχει καμία γραμμή"}` ("the document has no line"), **and the document was left unchanged** (confirms writes are validated/transactional, not partially applied on failure — good safety property). So the sync logic must never try to reduce a document to zero lines; if the last reservation is deleted, either leave a harmless placeholder line or handle that case deliberately.
+- Document currently has 1 line left over from this test (`A7642BB` qty 1) — intentionally not cleaned up further (can't be emptied per above), will simply get overwritten once the real sync writes actual reservation data.
+- Official worked example (BlackBook p.494-495, "6. Add Sales Document") for reference — confirms field names for a fresh SALDOC + ITELINES creation:
+  ```json
+  {
+    "SERVICE": "SetData", "OBJECT": "SALDOC", "KEY": "",
+    "DATA": {
+      "SALDOC": [{"SERIES": "7001", "TRDR": "40", "PAYMENT": "1003"}],
+      "ITELINES": [
+        {"LINENUM": 9000001, "MTRL": 2015, "QTY1": 1, "PRICE": 10, "VAT": "1310", "MTRUNIT4": "101", "MTRCATEGORY": "204"},
+        {"LINENUM": 9000002, "MTRL": 2016, "QTY1": 2, "PRICE": 5, "VAT": "1310", "MTRUNIT4": "101", "MTRCATEGORY": "204"}
+      ],
+      "SRVLINES": []
+    }
+  }
+  ```
+
+**Design implication for the real sync** (not built yet): since `LINENUM` must stay **stable per reservation** to update/delete individual lines without disturbing others, `reservations` needs a new nullable `softone_linenum integer` column — assigned once (starting at 9000001, incrementing) the first time a reservation is synced, then reused on every subsequent update/delete for that same reservation. On every sync call: fetch current live reservations for this doc, build the full `ITELINES` array (existing unchanged lines by `LINENUM` only, changed ones with `LINENUM` + changed fields, brand-new ones with a freshly-assigned `LINENUM` ≥ 9000001, deleted ones simply omitted), and send the whole array — this "always send full desired state" approach is what makes the sync correct and idempotent given the delete-by-omission semantics above.
+
+**Also, per user's own insight mid-session**: once this sync is live, SoftOne's own `Δεσμευμένα`/`ITEM.V15` (committed) will start including these mirrored order lines automatically, which means `ITEM.V21`/ΔΙΑΘΕΣΙΜΑ (already synced into `products.stock_softone`, see 4b below) will then also reflect our own app's reservations — no separate accounting needed for that.
+
+**Not yet built**: the actual endpoint (likely `POST /api/equipment/sync-order` on `softone-live-backend`, called after every reservation insert/update/delete from this app's frontend, mirroring the pattern already used for the stock sync) and the `softone_linenum` schema migration.
 
 ## 4b. SoftOne stock sync — investigated, not yet built
 
