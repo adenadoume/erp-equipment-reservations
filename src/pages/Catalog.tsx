@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, Col, Empty, Image, Input, Modal, Pagination, Row, Select, Spin, Tag, Typography, message } from 'antd'
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { DownloadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import type { Product } from '../types'
 import ReserveModal from '../components/ReserveModal'
@@ -82,10 +84,27 @@ export default function Catalog() {
     })
   }
 
+  function downloadXlsx() {
+    const rows = filtered.map((p) => ({
+      'Κωδικός': p.kodikos,
+      'Περιγραφή': p.perigrafi ?? '',
+      'Προμηθευτής': p.promitheftis ?? '',
+      'Κατηγορία': p.category ?? '',
+      'Container': p.container ?? '',
+      'Stock': p.q,
+      'ΔΙΑΘΕΣΙΜΑ': p.available_qty,
+      'ΛΙΑΝΙΚΗ ΜΕ ΦΠΑ': p.price ?? '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Products')
+    XLSX.writeFile(wb, `products_${dayjs().format('YYYY-MM-DD')}.xlsx`)
+  }
+
   return (
     <div>
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        <Col xs={24} sm={24} md={10} lg={12}>
+        <Col xs={24} sm={24} md={8} lg={10}>
           <Input
             allowClear
             prefix={<SearchOutlined />}
@@ -94,7 +113,7 @@ export default function Catalog() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </Col>
-        <Col xs={12} sm={8} md={5} lg={4}>
+        <Col xs={12} sm={8} md={4} lg={3}>
           <Select
             allowClear
             placeholder="Category"
@@ -104,7 +123,7 @@ export default function Catalog() {
             options={categories.map((c) => ({ value: c, label: c }))}
           />
         </Col>
-        <Col xs={12} sm={8} md={5} lg={4}>
+        <Col xs={12} sm={8} md={4} lg={3}>
           <Select
             allowClear
             placeholder="Supplier"
@@ -114,9 +133,14 @@ export default function Catalog() {
             options={suppliers.map((s) => ({ value: s, label: s }))}
           />
         </Col>
-        <Col xs={24} sm={8} md={4} lg={4}>
+        <Col xs={12} sm={8} md={4} lg={4}>
           <Button icon={<ReloadOutlined />} onClick={confirmSync} loading={syncing} block>
             Sync SoftOne stock
+          </Button>
+        </Col>
+        <Col xs={12} sm={8} md={4} lg={4}>
+          <Button icon={<DownloadOutlined />} onClick={downloadXlsx} block>
+            Download
           </Button>
         </Col>
       </Row>
