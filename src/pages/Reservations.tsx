@@ -133,10 +133,15 @@ export default function Reservations() {
         columns={[
           {
             title: 'Photo',
-            width: 70,
+            width: 110,
             render: (_, r) =>
               r.product?.photo_url ? (
-                <Image src={r.product.photo_url} width={48} height={48} style={{ objectFit: 'contain' }} />
+                <Image
+                  src={r.product.photo_url}
+                  width={90}
+                  height={90}
+                  style={{ objectFit: 'contain', background: '#111' }}
+                />
               ) : null,
           },
           { title: 'Project', dataIndex: 'project_code', sorter: (a, b) => a.project_code.localeCompare(b.project_code) },

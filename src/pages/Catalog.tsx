@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, Col, Empty, Image, Input, Pagination, Row, Select, Spin, Tag, Typography, message } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Button, Card, Col, Empty, Image, Input, Modal, Row, Select, Spin, Tag, Typography, message } from 'antd'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { supabase } from '../lib/supabase'
 import type { Product } from '../types'
@@ -14,9 +14,10 @@ export default function Catalog() {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string | null>(null)
   const [supplier, setSupplier] = useState<string | null>(null)
-  const [page, setPage] = useState(1)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [reserving, setReserving] = useState<Product | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   async function load() {
     setLoading(true)
@@ -52,9 +53,28 @@ export default function Catalog() {
     })
   }, [products, search, category, supplier])
 
-  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const visibleItems = filtered.slice(0, visibleCount)
 
-  async function syncStock() {
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [search, category, supplier])
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))
+        }
+      },
+      { rootMargin: '400px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [filtered.length])
+
+  async function runSync() {
     setSyncing(true)
     try {
       const resp = await fetch(SOFTONE_SYNC_URL, { method: 'POST' })
@@ -69,24 +89,25 @@ export default function Catalog() {
     }
   }
 
+  function confirmSync() {
+    Modal.confirm({
+      title: 'Sync stock from SoftOne?',
+      content: 'This refreshes stock_softone for the whole catalog from SoftOne. Are you sure?',
+      okText: 'Sync',
+      onOk: runSync,
+    })
+  }
+
   return (
     <div>
       <Row gutter={12} style={{ marginBottom: 20 }}>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={syncStock} loading={syncing}>
-            Sync SoftOne stock
-          </Button>
-        </Col>
         <Col flex="auto">
           <Input
             allowClear
             prefix={<SearchOutlined />}
             placeholder="Search code or description..."
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value)
-              setPage(1)
-            }}
+            onChange={(e) => setSearch(e.target.value)}
           />
         </Col>
         <Col>
@@ -95,10 +116,7 @@ export default function Catalog() {
             placeholder="Category"
             style={{ width: 200 }}
             value={category}
-            onChange={(v) => {
-              setCategory(v ?? null)
-              setPage(1)
-            }}
+            onChange={(v) => setCategory(v ?? null)}
             options={categories.map((c) => ({ value: c, label: c }))}
           />
         </Col>
@@ -108,12 +126,14 @@ export default function Catalog() {
             placeholder="Supplier"
             style={{ width: 160 }}
             value={supplier}
-            onChange={(v) => {
-              setSupplier(v ?? null)
-              setPage(1)
-            }}
+            onChange={(v) => setSupplier(v ?? null)}
             options={suppliers.map((s) => ({ value: s, label: s }))}
           />
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={confirmSync} loading={syncing}>
+            Sync SoftOne stock
+          </Button>
         </Col>
       </Row>
 
@@ -126,7 +146,7 @@ export default function Catalog() {
       ) : (
         <>
           <Row gutter={[16, 16]}>
-            {pageItems.map((p) => (
+            {visibleItems.map((p) => (
               <Col key={p.kodikos} xs={24} sm={12} md={8} lg={6} xl={6}>
                 <Card
                   hoverable
@@ -179,15 +199,11 @@ export default function Catalog() {
               </Col>
             ))}
           </Row>
-          <div style={{ marginTop: 24, textAlign: 'center' }}>
-            <Pagination
-              current={page}
-              pageSize={PAGE_SIZE}
-              total={filtered.length}
-              onChange={setPage}
-              showSizeChanger={false}
-            />
-          </div>
+          {visibleCount < filtered.length && (
+            <div ref={sentinelRef} style={{ textAlign: 'center', padding: 24 }}>
+              <Spin />
+            </div>
+          )}
         </>
       )}
 
