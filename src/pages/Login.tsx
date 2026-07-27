@@ -18,8 +18,17 @@ export default function Login() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', background: '#000' }}>
-      <Card style={{ width: 360 }}>
+    <div
+      style={{
+        display: 'flex',
+        minHeight: '100vh',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#000',
+        padding: 16,
+      }}
+    >
+      <Card style={{ width: '100%', maxWidth: 360 }}>
         <Typography.Title level={3} style={{ textAlign: 'center' }}>
           Equipment Reservations
         </Typography.Title>

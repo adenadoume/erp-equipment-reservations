@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Image, Input, InputNumber, Popconfirm, Select, Space, Spin, Table, Typography, message } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Col, Image, Input, InputNumber, Popconfirm, Row, Select, Space, Table, Typography, message } from 'antd'
 import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { supabase } from '../lib/supabase'
@@ -7,21 +7,17 @@ import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
 import type { Reservation } from '../types'
 
-type Row = Reservation & { product?: { photo_url: string | null } | null }
-
-const PAGE_SIZE = 20
+type RowType = Reservation & { product?: { photo_url: string | null } | null }
 
 export default function Reservations() {
   const { profile, session, isAdmin } = useAuth()
-  const [rows, setRows] = useState<Row[]>([])
+  const [rows, setRows] = useState<RowType[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [projectFilter, setProjectFilter] = useState<string | null>(null)
   const [architectFilter, setArchitectFilter] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editQty, setEditQty] = useState<number>(1)
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
-  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   async function load() {
     setLoading(true)
@@ -30,7 +26,7 @@ export default function Reservations() {
       .select('*, product:products(photo_url)')
       .order('created_at', { ascending: false })
     if (error) message.error(error.message)
-    setRows((data ?? []) as Row[])
+    setRows((data ?? []) as RowType[])
     setLoading(false)
   }
 
@@ -58,32 +54,11 @@ export default function Reservations() {
     })
   }, [rows, search, projectFilter, architectFilter])
 
-  const visibleRows = filtered.slice(0, visibleCount)
-
-  useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
-  }, [search, projectFilter, architectFilter])
-
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))
-        }
-      },
-      { rootMargin: '400px' },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [filtered.length])
-
-  function canEdit(row: Row) {
+  function canEdit(row: RowType) {
     return isAdmin || row.architect_id === session?.user.id
   }
 
-  async function saveEdit(row: Row) {
+  async function saveEdit(row: RowType) {
     const { error } = await supabase
       .from('reservations')
       .update({ quantity: editQty, edited_by: profile?.full_name ?? session?.user.email ?? null })
@@ -127,42 +102,49 @@ export default function Reservations() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 20 }} wrap>
-        <Input
-          allowClear
-          prefix={<SearchOutlined />}
-          placeholder="Search code or description..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: 260 }}
-        />
-        <Select
-          allowClear
-          placeholder="Project"
-          style={{ width: 160 }}
-          value={projectFilter}
-          onChange={(v) => setProjectFilter(v ?? null)}
-          options={projects.map((p) => ({ value: p, label: p }))}
-        />
-        <Select
-          allowClear
-          placeholder="Reserved by"
-          style={{ width: 160 }}
-          value={architectFilter}
-          onChange={(v) => setArchitectFilter(v ?? null)}
-          options={architects.map((a) => ({ value: a, label: a }))}
-        />
-        <Button icon={<DownloadOutlined />} onClick={downloadCsv}>
-          Download
-        </Button>
-      </Space>
+      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+        <Col xs={24} sm={24} md={10} lg={12}>
+          <Input
+            allowClear
+            prefix={<SearchOutlined />}
+            placeholder="Search code or description..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </Col>
+        <Col xs={12} sm={8} md={5} lg={4}>
+          <Select
+            allowClear
+            placeholder="Project"
+            style={{ width: '100%' }}
+            value={projectFilter}
+            onChange={(v) => setProjectFilter(v ?? null)}
+            options={projects.map((p) => ({ value: p, label: p }))}
+          />
+        </Col>
+        <Col xs={12} sm={8} md={5} lg={4}>
+          <Select
+            allowClear
+            placeholder="Reserved by"
+            style={{ width: '100%' }}
+            value={architectFilter}
+            onChange={(v) => setArchitectFilter(v ?? null)}
+            options={architects.map((a) => ({ value: a, label: a }))}
+          />
+        </Col>
+        <Col xs={24} sm={8} md={4} lg={4}>
+          <Button icon={<DownloadOutlined />} onClick={downloadCsv} block>
+            Download
+          </Button>
+        </Col>
+      </Row>
 
       <div style={{ overflowX: 'auto' }}>
-        <Table<Row>
+        <Table<RowType>
           rowKey="id"
           loading={loading}
-          dataSource={visibleRows}
-          pagination={false}
+          dataSource={filtered}
+          pagination={{ pageSize: 20, responsive: true, size: 'small' }}
           scroll={{ x: 1100 }}
           columns={[
             {
@@ -239,14 +221,7 @@ export default function Reservations() {
           ]}
         />
       </div>
-      {visibleCount < filtered.length && (
-        <div ref={sentinelRef} style={{ textAlign: 'center', padding: 24 }}>
-          <Spin />
-        </div>
-      )}
-      <Typography.Text type="secondary">
-        {visibleRows.length} of {filtered.length} reservations
-      </Typography.Text>
+      <Typography.Text type="secondary">{filtered.length} reservations</Typography.Text>
     </div>
   )
 }

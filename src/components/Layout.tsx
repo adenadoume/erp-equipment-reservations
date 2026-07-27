@@ -17,37 +17,36 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div style={{ minHeight: '100vh', background: '#000' }}>
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '16px 24px',
-          borderBottom: '1px solid #222',
-        }}
-      >
-        <Typography.Title level={4} style={{ margin: 0, color: '#fff' }}>
-          Equipment Reservations
+      <header className="app-header">
+        <Typography.Title level={4} style={{ margin: 0, color: '#fff', whiteSpace: 'nowrap' }}>
+          <span className="app-title-full">Equipment Reservations</span>
+          <span className="app-title-short">Equipment</span>
         </Typography.Title>
-        <Space size="middle">
+        <Space size="small" wrap>
           <Button
+            size="small"
             type={location.pathname === '/catalog' ? 'primary' : 'default'}
             onClick={() => navigate('/catalog')}
           >
-            MASTER CATALOG
+            <span className="nav-btn-full">MASTER CATALOG</span>
+            <span className="nav-btn-short">CATALOG</span>
           </Button>
           <Button
+            size="small"
             type={location.pathname === '/reservations' ? 'primary' : 'default'}
             onClick={() => navigate('/reservations')}
           >
-            RESERVATIONS
+            <span className="nav-btn-full">RESERVATIONS</span>
+            <span className="nav-btn-short">RESERV.</span>
           </Button>
-          <Avatar icon={<UserOutlined />} />
-          <Typography.Text style={{ color: '#fff' }}>{profile?.full_name}</Typography.Text>
-          <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout} style={{ color: '#fff' }} />
+          <Avatar size="small" icon={<UserOutlined />} />
+          <Typography.Text className="app-user-name" style={{ color: '#fff' }}>
+            {profile?.full_name}
+          </Typography.Text>
+          <Button type="text" size="small" icon={<LogoutOutlined />} onClick={handleLogout} style={{ color: '#fff' }} />
         </Space>
       </header>
-      <main style={{ padding: 24 }}>{children}</main>
+      <main className="app-main">{children}</main>
     </div>
   )
 }

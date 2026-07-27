@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, Col, Empty, Image, Input, Modal, Row, Select, Spin, Tag, Typography, message } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Card, Col, Empty, Image, Input, Modal, Pagination, Row, Select, Spin, Tag, Typography, message } from 'antd'
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { supabase } from '../lib/supabase'
 import type { Product } from '../types'
@@ -14,10 +14,9 @@ export default function Catalog() {
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<string | null>(null)
   const [supplier, setSupplier] = useState<string | null>(null)
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const [page, setPage] = useState(1)
   const [reserving, setReserving] = useState<Product | null>(null)
   const [syncing, setSyncing] = useState(false)
-  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   async function load() {
     setLoading(true)
@@ -53,26 +52,11 @@ export default function Catalog() {
     })
   }, [products, search, category, supplier])
 
-  const visibleItems = filtered.slice(0, visibleCount)
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
+    setPage(1)
   }, [search, category, supplier])
-
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisibleCount((c) => Math.min(c + PAGE_SIZE, filtered.length))
-        }
-      },
-      { rootMargin: '400px' },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [filtered.length])
 
   async function runSync() {
     setSyncing(true)
@@ -100,8 +84,8 @@ export default function Catalog() {
 
   return (
     <div>
-      <Row gutter={12} style={{ marginBottom: 20 }}>
-        <Col flex="auto">
+      <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
+        <Col xs={24} sm={24} md={10} lg={12}>
           <Input
             allowClear
             prefix={<SearchOutlined />}
@@ -110,28 +94,28 @@ export default function Catalog() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </Col>
-        <Col>
+        <Col xs={12} sm={8} md={5} lg={4}>
           <Select
             allowClear
             placeholder="Category"
-            style={{ width: 200 }}
+            style={{ width: '100%' }}
             value={category}
             onChange={(v) => setCategory(v ?? null)}
             options={categories.map((c) => ({ value: c, label: c }))}
           />
         </Col>
-        <Col>
+        <Col xs={12} sm={8} md={5} lg={4}>
           <Select
             allowClear
             placeholder="Supplier"
-            style={{ width: 160 }}
+            style={{ width: '100%' }}
             value={supplier}
             onChange={(v) => setSupplier(v ?? null)}
             options={suppliers.map((s) => ({ value: s, label: s }))}
           />
         </Col>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={confirmSync} loading={syncing}>
+        <Col xs={24} sm={8} md={4} lg={4}>
+          <Button icon={<ReloadOutlined />} onClick={confirmSync} loading={syncing} block>
             Sync SoftOne stock
           </Button>
         </Col>
@@ -146,7 +130,7 @@ export default function Catalog() {
       ) : (
         <>
           <Row gutter={[16, 16]}>
-            {visibleItems.map((p) => (
+            {pageItems.map((p) => (
               <Col key={p.kodikos} xs={24} sm={12} md={8} lg={6} xl={6}>
                 <Card
                   hoverable
@@ -199,11 +183,17 @@ export default function Catalog() {
               </Col>
             ))}
           </Row>
-          {visibleCount < filtered.length && (
-            <div ref={sentinelRef} style={{ textAlign: 'center', padding: 24 }}>
-              <Spin />
-            </div>
-          )}
+          <div style={{ marginTop: 24, textAlign: 'center' }}>
+            <Pagination
+              current={page}
+              pageSize={PAGE_SIZE}
+              total={filtered.length}
+              onChange={setPage}
+              showSizeChanger={false}
+              size="small"
+              responsive
+            />
+          </div>
         </>
       )}
 
