@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Card, Col, Empty, Image, Input, Pagination, Row, Select, Spin, Tag, Typography, message } from 'antd'
-import { SearchOutlined } from '@ant-design/icons'
+import { Button, Card, Col, Empty, Image, Input, Pagination, Row, Select, Spin, Tag, Typography, message } from 'antd'
+import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
 import { supabase } from '../lib/supabase'
 import type { Product } from '../types'
 import ReserveModal from '../components/ReserveModal'
 
 const PAGE_SIZE = 24
+const SOFTONE_SYNC_URL = 'https://erp.agop.pro/api/equipment/sync-stock'
 
 export default function Catalog() {
   const [products, setProducts] = useState<Product[]>([])
@@ -15,6 +16,7 @@ export default function Catalog() {
   const [supplier, setSupplier] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [reserving, setReserving] = useState<Product | null>(null)
+  const [syncing, setSyncing] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -52,9 +54,29 @@ export default function Catalog() {
 
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
+  async function syncStock() {
+    setSyncing(true)
+    try {
+      const resp = await fetch(SOFTONE_SYNC_URL, { method: 'POST' })
+      if (!resp.ok) throw new Error(`Sync failed (${resp.status})`)
+      const result = await resp.json()
+      message.success(`SoftOne stock synced: ${result.updated_in_supabase} items`)
+      await load()
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : 'Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div>
       <Row gutter={12} style={{ marginBottom: 20 }}>
+        <Col>
+          <Button icon={<ReloadOutlined />} onClick={syncStock} loading={syncing}>
+            Sync SoftOne stock
+          </Button>
+        </Col>
         <Col flex="auto">
           <Input
             allowClear
