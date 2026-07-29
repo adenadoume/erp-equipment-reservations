@@ -128,9 +128,16 @@ User: architects should only be able to edit/delete their **own** reservations (
 - Frontend (`AuthContext.tsx`) exposes `isAdmin`; `Reservations.tsx` hides the Edit/Delete buttons entirely for rows the current user doesn't own (unless admin) rather than showing controls that would just fail against RLS.
 - **Blocked on the same pending migration as 4/order-sync** — not live until `migration_002_admin_rls_softone.sql` is run.
 
-## 5. Deferred to Phase 2 (per user)
+## 5. Email notifications — built and live (2026-07-29)
 
-Email notification triggered on each reservation — explicitly phase 2, not part of the initial build.
+Was "deferred to phase 2" initially; built 2026-07-29. Two emails, both to `giorgos@palerosbay.com`, both on `softone-live-backend` reusing the **existing Zoho SMTP account** (`george@agop.pro`, credentials already live in `/home/ubuntu/softone-report/.env` — same account the daily sales reports already use, no new credentials needed):
+
+- **`POST /api/equipment/notify-reservation`** (`app/email_sender.py` + handler in `app/main.py`) — takes `{reservation_id}`, fetches the full reservation + product from Supabase (service-role, authoritative — not client-trusted data), and:
+  1. Always sends **"ARCHITECTS PDH RESERVATIONS"** with the body being a single line: `project | architect | code | description | category | Qty: N | date` (same field order as the CSV/XLSX exports, for consistency).
+  2. Separately checks that product's **live** `available_qty` (fresh query against `product_availability`, not a client-supplied number) — if it's now negative, **also** sends a second, differently-titled **"PDH ORDERS - ARCHITECTS RESERVATIONS"** email, same recipient, same line. Two separate emails by design (not one email with two paragraphs) so the over-commitment alert stands out in the inbox rather than blending in.
+- Frontend: `src/lib/notifyReservation.ts` (`triggerReservationEmail(id)`, fire-and-forget, mirrors `orderSync.ts`'s pattern) — called from `ReserveModal.tsx` after a successful insert (needed `.select().single()` on the insert to get the new row's id) and from `Reservations.tsx`'s `saveEdit`. **Deliberately not wired to delete** — user's wording was "when reservation or edit is made," and deleting reduces commitment (not the scenario that needs flagging).
+- **Verified live, both branches**: sent one real test to a normal-stock reservation (`negative_stock_email: false`, correctly didn't fire the second alert) and one to a known over-committed product (`available_qty: -10`, correctly fired both emails). Two real test emails landed in `giorgos@palerosbay.com`'s inbox as a result — expected, not spam.
+- New env vars on `softone-live-backend` (local + VM `.env`): `EMAIL_FROM`, `EMAIL_PASSWORD`, `SMTP_HOST`, `SMTP_PORT`, `EQUIPMENT_EMAIL_TO`.
 
 ---
 
@@ -216,3 +223,7 @@ User: architects finished cleaning up reservations they didn't want and re-enter
 - **Verified correctness properly this time — not just a line count match.** Aggregated both sides by product code and compared quantities: 73 distinct codes, 1,875 total units on each side, **zero mismatches**. Line count alone (111=111) wouldn't have caught a scenario where quantities were right but attributed to the wrong codes, or vice versa — worth doing this full check (not just count) whenever verifying this sync again.
 - Confirmed the re-enable is actually deployed: `grep -c "equipment/sync-order"` on the live Vercel JS bundle returns 1 (was 0 while disabled) — same verification method used to confirm the disable earlier, now used to confirm the re-enable.
 - `products.mtrl_id` coverage held up over the 2-day pause (1,084/1,101, same as when first backfilled) — the nightly stock-sync cron kept it fresh automatically, no manual re-backfill needed this time.
+
+### 2026-07-29 (continued) — Email notifications built
+
+Built the phase-2 email feature (section 5): two emails to `giorgos@palerosbay.com` on every reservation create/edit — always "ARCHITECTS PDH RESERVATIONS", plus a separately-titled "PDH ORDERS - ARCHITECTS RESERVATIONS" alert if that specific change pushed the product's ΔΙΑΘΕΣΙΜΑ negative. Reused the existing Zoho SMTP account already deployed for the daily sales reports (found by checking `/home/ubuntu/softone-report/.env` on the VM) rather than asking for new credentials. Full detail in section 5. Verified live against two real reservations (normal + over-committed) — correct behavior both times.
