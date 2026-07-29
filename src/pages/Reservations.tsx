@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
 import { triggerReservationEmail } from '../lib/notifyReservation'
+import { logReservationEvent } from '../lib/logEvent'
 import type { Reservation } from '../types'
 
 type RowType = Reservation & {
@@ -88,10 +89,17 @@ export default function Reservations() {
     load()
     triggerOrderSync()
     triggerReservationEmail(row.id)
+    logReservationEvent({
+      action: 'edit',
+      architect_name: profile?.full_name ?? session?.user.email ?? 'Unknown',
+      project_code: row.project_code,
+      product_code: row.product_code,
+      quantity: editQty,
+    })
   }
 
-  async function deleteRow(id: string) {
-    const { data, error } = await supabase.from('reservations').delete().eq('id', id).select()
+  async function deleteRow(row: RowType) {
+    const { data, error } = await supabase.from('reservations').delete().eq('id', row.id).select()
     if (error) {
       message.error(error.message)
       return
@@ -103,6 +111,13 @@ export default function Reservations() {
     message.success('Deleted')
     load()
     triggerOrderSync()
+    logReservationEvent({
+      action: 'delete',
+      architect_name: profile?.full_name ?? session?.user.email ?? 'Unknown',
+      project_code: row.project_code,
+      product_code: row.product_code,
+      quantity: row.quantity,
+    })
   }
 
   function downloadCsv() {
@@ -245,7 +260,7 @@ export default function Reservations() {
                     >
                       Edit
                     </Button>
-                    <Popconfirm title="Delete this reservation?" onConfirm={() => deleteRow(r.id)}>
+                    <Popconfirm title="Delete this reservation?" onConfirm={() => deleteRow(r)}>
                       <Button size="small" danger>
                         Delete
                       </Button>

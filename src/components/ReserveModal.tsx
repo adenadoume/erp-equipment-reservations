@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
 import { triggerReservationEmail } from '../lib/notifyReservation'
+import { logReservationEvent } from '../lib/logEvent'
 import type { Product, ProjectRow } from '../types'
 
 export default function ReserveModal({
@@ -65,6 +66,13 @@ export default function ReserveModal({
     onDone()
     triggerOrderSync()
     if (data) triggerReservationEmail(data.id)
+    logReservationEvent({
+      action: 'create',
+      architect_name: profile?.full_name ?? session?.user.email ?? 'Unknown',
+      project_code: projectCode,
+      product_code: product.kodikos,
+      quantity: values.quantity,
+    })
   }
 
   return (
