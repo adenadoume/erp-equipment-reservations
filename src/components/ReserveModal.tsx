@@ -3,6 +3,7 @@ import { Form, InputNumber, Modal, Select, message } from 'antd'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
+import { triggerReservationEmail } from '../lib/notifyReservation'
 import type { Product, ProjectRow } from '../types'
 
 export default function ReserveModal({
@@ -42,15 +43,19 @@ export default function ReserveModal({
     const projectCode = values.project_code?.[0]
     if (!projectCode) return
     setSaving(true)
-    const { error } = await supabase.from('reservations').insert({
-      product_code: product.kodikos,
-      architect_id: session?.user.id ?? null,
-      architect_name: profile?.full_name ?? session?.user.email ?? 'Unknown',
-      project_code: projectCode,
-      quantity: values.quantity,
-      description: product.perigrafi,
-      category: product.category,
-    })
+    const { data, error } = await supabase
+      .from('reservations')
+      .insert({
+        product_code: product.kodikos,
+        architect_id: session?.user.id ?? null,
+        architect_name: profile?.full_name ?? session?.user.email ?? 'Unknown',
+        project_code: projectCode,
+        quantity: values.quantity,
+        description: product.perigrafi,
+        category: product.category,
+      })
+      .select()
+      .single()
     setSaving(false)
     if (error) {
       message.error(error.message)
@@ -59,6 +64,7 @@ export default function ReserveModal({
     message.success(`Reserved ${values.quantity} × ${product.kodikos}`)
     onDone()
     triggerOrderSync()
+    if (data) triggerReservationEmail(data.id)
   }
 
   return (

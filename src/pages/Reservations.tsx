@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
+import { triggerReservationEmail } from '../lib/notifyReservation'
 import type { Reservation } from '../types'
 
 type RowType = Reservation & {
@@ -86,6 +87,7 @@ export default function Reservations() {
     setEditingId(null)
     load()
     triggerOrderSync()
+    triggerReservationEmail(row.id)
   }
 
   async function deleteRow(id: string) {
