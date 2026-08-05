@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Form, InputNumber, Modal, Select, message } from 'antd'
+import { ExclamationCircleOutlined } from '@ant-design/icons'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
@@ -29,15 +30,29 @@ export default function ReserveModal({
       .then(({ data }) => setProjects((data ?? []) as ProjectRow[]))
   }, [])
 
-  async function handleAddProject(code: string) {
+  function handleAddProject(code: string) {
     const trimmed = code.trim()
     if (!trimmed) return
-    const { error } = await supabase.from('projects').upsert({ code: trimmed, name: trimmed })
-    if (error) {
-      message.error(error.message)
-      return
-    }
-    setProjects((prev) => (prev.some((p) => p.code === trimmed) ? prev : [...prev, { code: trimmed, name: trimmed }]))
+    Modal.confirm({
+      title: 'Add new project?',
+      icon: <ExclamationCircleOutlined />,
+      content: `"${trimmed}" doesn't exist yet. Add it as a new project code?`,
+      okText: 'Add project',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        const { error } = await supabase.from('projects').upsert({ code: trimmed, name: trimmed })
+        if (error) {
+          message.error(error.message)
+          form.setFieldValue('project_code', [])
+          return
+        }
+        setProjects((prev) => (prev.some((p) => p.code === trimmed) ? prev : [...prev, { code: trimmed, name: trimmed }]))
+        message.success(`Added project ${trimmed}`)
+      },
+      onCancel: () => {
+        form.setFieldValue('project_code', [])
+      },
+    })
   }
 
   async function onFinish(values: { project_code: string[]; quantity: number }) {

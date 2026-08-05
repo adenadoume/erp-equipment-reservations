@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Col, Image, Input, InputNumber, Popconfirm, Row, Select, Space, Table, Tooltip, Typography, message } from 'antd'
-import { DownloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { Button, Col, Image, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Table, Tooltip, Typography, message } from 'antd'
+import { DownloadOutlined, ExclamationCircleOutlined, SearchOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/AuthContext'
 import { triggerOrderSync } from '../lib/orderSync'
 import { triggerReservationEmail } from '../lib/notifyReservation'
 import { logReservationEvent } from '../lib/logEvent'
-import type { Reservation } from '../types'
+import type { ProjectRow, Reservation } from '../types'
 
 type RowType = Reservation & {
   product?: { photo_url: string | null; q: number } | null
@@ -23,6 +23,7 @@ export default function Reservations() {
   const [architectFilter, setArchitectFilter] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editQty, setEditQty] = useState<number>(1)
+  const [allProjects, setAllProjects] = useState<ProjectRow[]>([])
 
   async function load() {
     setLoading(true)
@@ -43,12 +44,50 @@ export default function Reservations() {
     setLoading(false)
   }
 
+  async function loadProjects() {
+    const { data, error } = await supabase.from('projects').select('code, name').order('code')
+    if (error) {
+      message.error(error.message)
+      return
+    }
+    setAllProjects((data ?? []) as ProjectRow[])
+  }
+
   useEffect(() => {
     load()
+    loadProjects()
   }, [])
 
-  const projects = useMemo(() => Array.from(new Set(rows.map((r) => r.project_code))).sort(), [rows])
   const architects = useMemo(() => Array.from(new Set(rows.map((r) => r.architect_name))).sort(), [rows])
+
+  function handleProjectFilterChange(vals: string[]) {
+    const code = vals[vals.length - 1]?.trim()
+    if (!code) {
+      setProjectFilter(null)
+      return
+    }
+    if (allProjects.some((p) => p.code === code)) {
+      setProjectFilter(code)
+      return
+    }
+    Modal.confirm({
+      title: 'Add new project?',
+      icon: <ExclamationCircleOutlined />,
+      content: `"${code}" doesn't exist yet. Add it as a new project code?`,
+      okText: 'Add project',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        const { error } = await supabase.from('projects').upsert({ code, name: code })
+        if (error) {
+          message.error(error.message)
+          return
+        }
+        setAllProjects((prev) => (prev.some((p) => p.code === code) ? prev : [...prev, { code, name: code }]))
+        setProjectFilter(code)
+        message.success(`Added project ${code}`)
+      },
+    })
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -152,11 +191,15 @@ export default function Reservations() {
         <Col xs={12} sm={8} md={5} lg={4}>
           <Select
             allowClear
-            placeholder="Project"
+            showSearch
+            mode="tags"
+            maxCount={1}
+            placeholder="Project (or type a new OIK code)"
             style={{ width: '100%' }}
-            value={projectFilter}
-            onChange={(v) => setProjectFilter(v ?? null)}
-            options={projects.map((p) => ({ value: p, label: p }))}
+            value={projectFilter ? [projectFilter] : []}
+            onChange={handleProjectFilterChange}
+            options={allProjects.map((p) => ({ value: p.code, label: p.code }))}
+            filterOption={(input, option) => (option?.label as string).toLowerCase().includes(input.toLowerCase())}
           />
         </Col>
         <Col xs={12} sm={8} md={5} lg={4}>
