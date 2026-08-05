@@ -21,3 +21,6 @@ npm-debug.log*
 
 # proprietary vendor docs — reference only, never public
 SoftOne BlackBook*.pdf
+
+# internal purchasing/costing spreadsheets (supplier cost, USD pricing, markups) — never public
+I247*.xlsx
